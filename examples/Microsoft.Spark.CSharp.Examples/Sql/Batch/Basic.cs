@@ -27,6 +27,7 @@ namespace Microsoft.Spark.Examples.Sql.Batch
             SparkSession spark = SparkSession
                 .Builder()
                 .AppName(".NET Spark SQL basic example")
+                .Config("spark.driver.host", "127.0.0.1")
                 .Config("spark.some.config.option", "some-value")
                 .GetOrCreate();
 

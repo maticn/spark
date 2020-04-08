@@ -14,6 +14,7 @@ namespace Microsoft.Spark.Examples.Sql.Streaming
     /// </summary>
     internal sealed class StructuredKafkaWordCount : IExample
     {
+        private static readonly string _CheckpointLocation = @"C:\temp\sparkcheckpoint";
         public void Run(string[] args)
         {
             if (args.Length != 3)
@@ -31,6 +32,7 @@ namespace Microsoft.Spark.Examples.Sql.Streaming
             SparkSession spark = SparkSession
                 .Builder()
                 .AppName("StructuredKafkaWordCount")
+                .Config("checkpointLocation", _CheckpointLocation)
                 .GetOrCreate();
 
             DataFrame lines = spark
@@ -43,13 +45,23 @@ namespace Microsoft.Spark.Examples.Sql.Streaming
 
             DataFrame words = lines
                 .Select(Explode(Split(lines["value"], " "))
-                    .Alias("word"));
-            DataFrame wordCounts = words.GroupBy("word").Count();
+                    .Alias("value"));
+            DataFrame wordCounts = words.GroupBy("value").Count();
+            
+            //Spark.Sql.Streaming.StreamingQuery query = wordCounts
+            //    .WriteStream()
+            //    .OutputMode("complete")
+            //    .Format("console")
+            //    .Start();
 
             Spark.Sql.Streaming.StreamingQuery query = wordCounts
+                .SelectExpr("CAST(value AS STRING)")
                 .WriteStream()
                 .OutputMode("complete")
-                .Format("console")
+                .Format("kafka")
+                .Option("kafka.bootstrap.servers", "localhost:9092")
+                .Option("topic", "replay-topic")
+                .Option("checkpointLocation", _CheckpointLocation)
                 .Start();
 
             query.AwaitTermination();
