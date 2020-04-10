@@ -36,40 +36,56 @@ namespace Microsoft.Spark.Examples.Sql.Streaming
                 .Config("checkpointLocation", _CheckpointLocation)
                 .GetOrCreate();
 
-            DataFrame lines = spark
+
+            // Need to explicitly specify the schema since pickling vs. arrow formatting
+            // will return different types. Pickling will turn longs into ints if the values fit.
+            // Same as the "age INT, name STRING" DDL-format string.
+            StructType inputSchema = new StructType(new[]
+            {
+                new StructField("ID", new IntegerType()),
+                new StructField("EventTypeID", new IntegerType()),
+                new StructField("Timestamp", new TimestampType()),
+                new StructField("UID1", new StringType()),
+                new StructField("UID2", new StringType()),
+                new StructField("objectType", new StringType()),
+            });
+            //DataFrame df = spark.Read().Schema(inputSchema).Json(args[0]);
+
+            DataFrame jsonString = spark
                 .ReadStream()
                 .Format("kafka")
                 .Option("kafka.bootstrap.servers", bootstrapServers)
                 .Option(subscribeType, topics)
                 .Load()
                 .SelectExpr("CAST(value AS STRING)");
+            jsonString.PrintSchema();
 
-            DataFrame words = lines
-                .Select(Explode(Split(lines["value"], " "))
-                    .Alias("value"));
-            DataFrame wordCounts = words.GroupBy("value").Count();
+            DataFrame objectDataFrame = jsonString.Select(FromJson(Col("value"), inputSchema.Json));
+            objectDataFrame.PrintSchema();
 
-            //Spark.Sql.Streaming.StreamingQuery query = wordCounts
+            DataFrame onlyTimestamp = objectDataFrame.Select("jsontostructs(value).Timestamp");
+            onlyTimestamp.PrintSchema();
+
+            // TODO M: It does compile. :)
+            // There are unconsumed strings in the topic which do not apply to the schema.
+            // That is probably the reason for failure. Clear the topic or create a new one.
+
+
+            //DataFrame convertedJson = jsonString.ToDF();
+            //convertedJson.PrintSchema();
+
+            //convertedJson
             //    .WriteStream()
-            //    .OutputMode("complete")
-            //    .Format("console")
-            //    .Start();
+            //    .Format("parquet")
+            //    .Option("path", "/example/streamingtripdata")
+            //    .Option("checkpointLocation", "/streamcheckpoint")
+            //    .Start().AwaitTermination(30000);
 
 
-            // Need to explicitly specify the schema since pickling vs. arrow formatting
-            // will return different types. Pickling will turn longs into ints if the values fit.
-            // Same as the "age INT, name STRING" DDL-format string.
-            //var inputSchema = new StructType(new[]
-            //{
-            //    new StructField("age", new IntegerType()),
-            //    new StructField("name", new StringType())
-            //});
-            //DataFrame df = spark.Read().Schema(inputSchema).Json(args[0]);
-
-            Spark.Sql.Streaming.StreamingQuery query = wordCounts
-                .SelectExpr("CAST(value AS STRING)")
+            Spark.Sql.Streaming.StreamingQuery query = onlyTimestamp
+                //.SelectExpr("CAST(value AS STRING)")
                 .WriteStream()
-                .OutputMode("complete")
+                //.OutputMode("complete")
                 .Format("kafka")
                 .Option("kafka.bootstrap.servers", "localhost:9092")
                 .Option("topic", "replay-topic")
