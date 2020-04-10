@@ -4,6 +4,7 @@
 
 using System;
 using Microsoft.Spark.Sql;
+using Microsoft.Spark.Sql.Types;
 using static Microsoft.Spark.Sql.Functions;
 
 namespace Microsoft.Spark.Examples.Sql.Streaming
@@ -47,12 +48,23 @@ namespace Microsoft.Spark.Examples.Sql.Streaming
                 .Select(Explode(Split(lines["value"], " "))
                     .Alias("value"));
             DataFrame wordCounts = words.GroupBy("value").Count();
-            
+
             //Spark.Sql.Streaming.StreamingQuery query = wordCounts
             //    .WriteStream()
             //    .OutputMode("complete")
             //    .Format("console")
             //    .Start();
+
+
+            // Need to explicitly specify the schema since pickling vs. arrow formatting
+            // will return different types. Pickling will turn longs into ints if the values fit.
+            // Same as the "age INT, name STRING" DDL-format string.
+            //var inputSchema = new StructType(new[]
+            //{
+            //    new StructField("age", new IntegerType()),
+            //    new StructField("name", new StringType())
+            //});
+            //DataFrame df = spark.Read().Schema(inputSchema).Json(args[0]);
 
             Spark.Sql.Streaming.StreamingQuery query = wordCounts
                 .SelectExpr("CAST(value AS STRING)")
