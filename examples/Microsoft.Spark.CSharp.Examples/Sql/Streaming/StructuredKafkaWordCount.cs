@@ -3,6 +3,7 @@
 // See the LICENSE file in the project root for more information.
 
 using System;
+using System.Linq;
 using Microsoft.Spark.Sql;
 using Microsoft.Spark.Sql.Types;
 using static Microsoft.Spark.Sql.Functions;
@@ -17,6 +18,7 @@ namespace Microsoft.Spark.Examples.Sql.Streaming
     {
         private static readonly string _CheckpointLocation = @"C:\temp\sparkcheckpoint";
         private static readonly string _Value = "value";
+        private static readonly string[] _ReturnColumns = { "EventTypeID", "UID2", "Timestamp" };
 
         public void Run(string[] args)
         {
@@ -52,10 +54,7 @@ namespace Microsoft.Spark.Examples.Sql.Streaming
                 new StructField("objectType", new StringType()),
             });
             //DataFrame df = spark.Read().Schema(inputSchema).Json(args[0]);
-
-            string returnColumn1 = "EventTypeID";
-            string returnColumn2 = "UID2";
-
+            
             DataFrame jsonString = spark
                 .ReadStream()
                 .Format("kafka")
@@ -68,13 +67,13 @@ namespace Microsoft.Spark.Examples.Sql.Streaming
             DataFrame objectDF = jsonString.Select(FromJson(Col(_Value), inputSchema.Json).Alias(_Value));
             objectDF.PrintSchema();
 
-            DataFrame returnColumns = objectDF.Select($"{_Value}.{returnColumn1}", $"{_Value}.{returnColumn2}");
+            DataFrame returnColumns = objectDF.Select(GetReturnColumnNamesWithPrefix()[0], GetReturnColumnNamesWithPrefix().ToArray().Skip(1).ToArray());
             returnColumns.PrintSchema();
 
-            //DataFrame renamedColumn = returnColumns.WithColumnRenamed(returnColumn1, _Value);
+            //DataFrame renamedColumn = returnColumns.WithColumnRenamed("EventTypeID", _Value);
             //renamedColumn.PrintSchema();
 
-            DataFrame returnColumnsJson = returnColumns.Select(ToJson(Struct(returnColumn1, returnColumn2)).Alias(_Value));
+            DataFrame returnColumnsJson = returnColumns.Select(ToJson(Struct(_ReturnColumns[0], _ReturnColumns.ToArray().Skip(1).ToArray())).Alias(_Value));
             returnColumnsJson.PrintSchema();
 
 
@@ -98,6 +97,18 @@ namespace Microsoft.Spark.Examples.Sql.Streaming
                 .Start();
 
             query.AwaitTermination();
+        }
+
+        private string[] GetReturnColumnNamesWithPrefix()
+        {
+            string[] res = new string[_ReturnColumns.Length];
+            for (var i = 0; i < _ReturnColumns.Length; i++)
+            {
+                string col = _ReturnColumns[i];
+                res[i] = $"{_Value}.{col}";
+            }
+
+            return res;
         }
     }
 }
