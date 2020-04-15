@@ -51,6 +51,8 @@ namespace Microsoft.Spark.Examples.Sql.Streaming
             });
             //DataFrame df = spark.Read().Schema(inputSchema).Json(args[0]);
 
+            string returnColumn = "UID2";
+
             DataFrame jsonString = spark
                 .ReadStream()
                 .Format("kafka")
@@ -63,16 +65,12 @@ namespace Microsoft.Spark.Examples.Sql.Streaming
             DataFrame objectDataFrame = jsonString.Select(FromJson(Col("value"), inputSchema.Json));
             objectDataFrame.PrintSchema();
 
-            DataFrame onlyTimestamp = objectDataFrame.Select("jsontostructs(value).Timestamp");
+            DataFrame onlyTimestamp = objectDataFrame.Select($"jsontostructs(value).{returnColumn}");
             onlyTimestamp.PrintSchema();
 
-            // TODO M: It does compile. :)
-            // There are unconsumed strings in the topic which do not apply to the schema.
-            // That is probably the reason for failure. Clear the topic or create a new one.
+            DataFrame valueAsOutput = onlyTimestamp.WithColumnRenamed(returnColumn, "value");
+            valueAsOutput.PrintSchema();
 
-
-            //DataFrame convertedJson = jsonString.ToDF();
-            //convertedJson.PrintSchema();
 
             //convertedJson
             //    .WriteStream()
@@ -80,10 +78,10 @@ namespace Microsoft.Spark.Examples.Sql.Streaming
             //    .Option("path", "/example/streamingtripdata")
             //    .Option("checkpointLocation", "/streamcheckpoint")
             //    .Start().AwaitTermination(30000);
+            
 
-
-            Spark.Sql.Streaming.StreamingQuery query = onlyTimestamp
-                //.SelectExpr("CAST(value AS STRING)")
+            Spark.Sql.Streaming.StreamingQuery query = valueAsOutput
+                .SelectExpr("CAST(value AS STRING)")
                 .WriteStream()
                 //.OutputMode("complete")
                 .Format("kafka")
