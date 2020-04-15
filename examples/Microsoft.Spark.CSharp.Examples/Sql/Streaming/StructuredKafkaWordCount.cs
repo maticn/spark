@@ -16,6 +16,8 @@ namespace Microsoft.Spark.Examples.Sql.Streaming
     internal sealed class StructuredKafkaWordCount : IExample
     {
         private static readonly string _CheckpointLocation = @"C:\temp\sparkcheckpoint";
+        private static readonly string _Value = "value";
+
         public void Run(string[] args)
         {
             if (args.Length != 3)
@@ -51,7 +53,8 @@ namespace Microsoft.Spark.Examples.Sql.Streaming
             });
             //DataFrame df = spark.Read().Schema(inputSchema).Json(args[0]);
 
-            string returnColumn = "UID2";
+            string returnColumn1 = "EventTypeID";
+            string returnColumn2 = "UID2";
 
             DataFrame jsonString = spark
                 .ReadStream()
@@ -62,14 +65,17 @@ namespace Microsoft.Spark.Examples.Sql.Streaming
                 .SelectExpr("CAST(value AS STRING)");
             jsonString.PrintSchema();
 
-            DataFrame objectDataFrame = jsonString.Select(FromJson(Col("value"), inputSchema.Json));
-            objectDataFrame.PrintSchema();
+            DataFrame objectDF = jsonString.Select(FromJson(Col(_Value), inputSchema.Json).Alias(_Value));
+            objectDF.PrintSchema();
 
-            DataFrame onlyTimestamp = objectDataFrame.Select($"jsontostructs(value).{returnColumn}");
-            onlyTimestamp.PrintSchema();
+            DataFrame returnColumns = objectDF.Select($"{_Value}.{returnColumn1}", $"{_Value}.{returnColumn2}");
+            returnColumns.PrintSchema();
 
-            DataFrame valueAsOutput = onlyTimestamp.WithColumnRenamed(returnColumn, "value");
-            valueAsOutput.PrintSchema();
+            //DataFrame renamedColumn = returnColumns.WithColumnRenamed(returnColumn1, _Value);
+            //renamedColumn.PrintSchema();
+
+            DataFrame returnColumnsJson = returnColumns.Select(ToJson(Struct(returnColumn1, returnColumn2)).Alias(_Value));
+            returnColumnsJson.PrintSchema();
 
 
             //convertedJson
@@ -78,10 +84,11 @@ namespace Microsoft.Spark.Examples.Sql.Streaming
             //    .Option("path", "/example/streamingtripdata")
             //    .Option("checkpointLocation", "/streamcheckpoint")
             //    .Start().AwaitTermination(30000);
-            
 
-            Spark.Sql.Streaming.StreamingQuery query = valueAsOutput
+
+            Spark.Sql.Streaming.StreamingQuery query = returnColumnsJson
                 .SelectExpr("CAST(value AS STRING)")
+                //.SelectExpr("CAST(value AS STRING)", "CAST(UID2 AS STRING)")
                 .WriteStream()
                 //.OutputMode("complete")
                 .Format("kafka")
