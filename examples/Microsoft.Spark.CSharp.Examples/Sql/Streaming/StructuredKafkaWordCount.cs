@@ -3,6 +3,8 @@
 // See the LICENSE file in the project root for more information.
 
 using System;
+using System.Collections.Generic;
+using System.Collections.ObjectModel;
 using System.Linq;
 using Microsoft.Spark.Sql;
 using Microsoft.Spark.Sql.Types;
@@ -18,7 +20,7 @@ namespace Microsoft.Spark.Examples.Sql.Streaming
     {
         private static readonly string _CheckpointLocation = @"C:\temp\sparkcheckpoint";
         private static readonly string _Value = "value";
-        private static readonly string[] _ReturnColumns = { "EventTypeID", "UID2", "Timestamp" };
+        private static readonly string[] _ReturnColumns = { "EventTypeID", "UID2", "Timestamp", "ManualTimestamp", "KafkasorgTimestamp" };
 
         public void Run(string[] args)
         {
@@ -38,8 +40,8 @@ namespace Microsoft.Spark.Examples.Sql.Streaming
                 .Builder()
                 .AppName("StructuredKafkaWordCount")
                 .Config("checkpointLocation", _CheckpointLocation)
+                //.Config("spark.sql.session.timeZone", "UTC")
                 .GetOrCreate();
-
 
             // Need to explicitly specify the schema since pickling vs. arrow formatting
             // will return different types. Pickling will turn longs into ints if the values fit.
@@ -48,7 +50,7 @@ namespace Microsoft.Spark.Examples.Sql.Streaming
             {
                 new StructField("ID", new IntegerType()),
                 new StructField("EventTypeID", new IntegerType()),
-                new StructField("Timestamp", new TimestampType()),
+                new StructField("Timestamp", new StringType()),
                 new StructField("UID1", new StringType()),
                 new StructField("UID2", new StringType()),
                 new StructField("objectType", new StringType()),
@@ -61,10 +63,13 @@ namespace Microsoft.Spark.Examples.Sql.Streaming
                 .Option("kafka.bootstrap.servers", bootstrapServers)
                 .Option(subscribeType, topics)
                 .Load()
-                .SelectExpr("CAST(value AS STRING)");
+                .SelectExpr("CAST(value AS STRING)", "CAST(timestamp AS TIMESTAMP)");
             jsonString.PrintSchema();
 
-            DataFrame objectDF = jsonString.Select(FromJson(Col(_Value), inputSchema.Json).Alias(_Value));
+            DataFrame objectDF = jsonString.Select(FromJson(Col(_Value), inputSchema.Json).Alias(_Value), Col("Timestamp").Alias("KafkasorgTimestamp"));
+            objectDF.PrintSchema();
+
+            objectDF = objectDF.WithColumn("ManualTimestamp", ToTimestamp(Col($"{_Value}.Timestamp")));
             objectDF.PrintSchema();
 
             DataFrame returnColumns = objectDF.Select(GetReturnColumnNamesWithPrefix()[0], GetReturnColumnNamesWithPrefix().ToArray().Skip(1).ToArray());
@@ -105,7 +110,15 @@ namespace Microsoft.Spark.Examples.Sql.Streaming
             for (var i = 0; i < _ReturnColumns.Length; i++)
             {
                 string col = _ReturnColumns[i];
-                res[i] = $"{_Value}.{col}";
+
+                if (!col.ToUpper().Contains("KAFKASORG") && !col.ToUpper().Contains("MANUAL"))
+                {
+                    res[i] = $"{_Value}.{col}";
+                }
+                else
+                {
+                    res[i] = col;
+                }
             }
 
             return res;
