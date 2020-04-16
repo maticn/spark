@@ -18,19 +18,17 @@ namespace Microsoft.Spark.Examples.Sql.Streaming
     /// </summary>
     internal sealed class KafkaStreamJoins : IExample
     {
-        private static readonly string _CheckpointLocation = @"C:\temp\sparkcheckpoint";
         private static readonly string _Value = "value";
-        private static readonly string[] _ReturnColumns = { "ID", "EventTypeID", "UID1", "UID2", "objectType", "Timestamp", "ManualTimestamp", "KafkasorgTimestamp" };
-
         private static readonly string _BootstrapServers = "localhost:9092";
         private static readonly string _SubscribeType = "subscribe";
+        private static readonly string _CheckpointLocation = @"C:\temp\sparkcheckpoint";
 
         public void Run(string[] args)
         {
             SparkSession spark = SparkSession
                 .Builder()
                 .AppName("StructuredKafkaWordCount")
-                .Config("checkpointLocation", _CheckpointLocation)
+                //.Config("checkpointLocation", _CheckpointLocation)
                 .GetOrCreate();
 
             DataFrame loginsStream = spark
@@ -42,7 +40,7 @@ namespace Microsoft.Spark.Examples.Sql.Streaming
                 .SelectExpr("CAST(value AS STRING)", "CAST(timestamp AS TIMESTAMP)");
             loginsStream.PrintSchema();
 
-            DataFrame logins = GetDeserializedDF(loginsStream);
+            DataFrame logins = GetPurifiedDF(loginsStream);
 
             Spark.Sql.Streaming.StreamingQuery query = logins
                 .SelectExpr("CAST(value AS STRING)")
@@ -58,7 +56,7 @@ namespace Microsoft.Spark.Examples.Sql.Streaming
             query.AwaitTermination();
         }
 
-        private DataFrame GetDeserializedDF(DataFrame p_RawDF)
+        private DataFrame GetPurifiedDF(DataFrame p_RawDF)
         {
             // Need to explicitly specify the schema since pickling vs. arrow formatting
             // will return different types. Pickling will turn longs into ints if the values fit.
@@ -74,38 +72,24 @@ namespace Microsoft.Spark.Examples.Sql.Streaming
             });
             //DataFrame df = spark.Read().Schema(inputSchema).Json(args[0]);
 
-
             DataFrame objectDF = p_RawDF.Select(FromJson(Col(_Value), inputSchema.Json).Alias(_Value), Col("Timestamp").Alias("KafkasorgTimestamp"));
             objectDF = objectDF.WithColumn("ManualTimestamp", ToTimestamp(Col($"{_Value}.Timestamp")));
             objectDF.PrintSchema();
 
-            DataFrame returnColumns = objectDF.Select(GetReturnColumnNamesWithPrefix()[0], GetReturnColumnNamesWithPrefix().ToArray().Skip(1).ToArray());
+            List<StructField> structFields = inputSchema.Fields;
+            string[] returnCols = new string[structFields.Count + 1];
+            returnCols[returnCols.Length - 1] = "ManualTimestamp";
+            for (var i = 0; i < structFields.Count; i++)
+            {
+                returnCols[i] = $"{_Value}.{structFields[i].Name}";
+            }
+            DataFrame returnColumns = objectDF.Select("KafkasorgTimestamp", returnCols);
             returnColumns.PrintSchema();
 
             DataFrame returnColumnsJson = returnColumns.Select(ToJson(Struct("*")).Alias(_Value));
             returnColumnsJson.PrintSchema();
 
             return returnColumnsJson;
-        }
-
-        private string[] GetReturnColumnNamesWithPrefix()
-        {
-            string[] res = new string[_ReturnColumns.Length];
-            for (var i = 0; i < _ReturnColumns.Length; i++)
-            {
-                string col = _ReturnColumns[i];
-
-                if (!col.ToUpper().Contains("KAFKASORG") && !col.ToUpper().Contains("MANUAL"))
-                {
-                    res[i] = $"{_Value}.{col}";
-                }
-                else
-                {
-                    res[i] = col;
-                }
-            }
-
-            return res;
         }
     }
 }
