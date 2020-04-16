@@ -18,10 +18,10 @@ namespace Microsoft.Spark.Examples.Sql.Streaming
     /// </summary>
     internal sealed class KafkaStreamJoins : IExample
     {
-        private static readonly string _Value = "value";
         private static readonly string _BootstrapServers = "localhost:9092";
         private static readonly string _SubscribeType = "subscribe";
         private static readonly string _CheckpointLocation = @"C:\temp\sparkcheckpoint";
+        private static readonly string _Value = "value";
 
         public void Run(string[] args)
         {
@@ -35,14 +35,32 @@ namespace Microsoft.Spark.Examples.Sql.Streaming
                 .ReadStream()
                 .Format("kafka")
                 .Option("kafka.bootstrap.servers", _BootstrapServers)
-                .Option(_SubscribeType, "test-topic")
+                .Option(_SubscribeType, "logins-topic")
                 .Load()
                 .SelectExpr("CAST(value AS STRING)", "CAST(timestamp AS TIMESTAMP)");
             loginsStream.PrintSchema();
+            DataFrame logins = GetPurifiedDF(loginsStream, true);
 
-            DataFrame logins = GetPurifiedDF(loginsStream);
+            DataFrame logoutsStream = spark
+                .ReadStream()
+                .Format("kafka")
+                .Option("kafka.bootstrap.servers", _BootstrapServers)
+                .Option(_SubscribeType, "logouts-topic")
+                .Load()
+                .SelectExpr("CAST(value AS STRING)", "CAST(timestamp AS TIMESTAMP)");
+            logoutsStream.PrintSchema();
+            DataFrame logouts = GetPurifiedDF(logoutsStream, false);
 
-            Spark.Sql.Streaming.StreamingQuery query = logins
+            List<string> joiningColumns = new List<string> {"UID1", "UID2"};
+            DataFrame joins = logins.Join(logouts, joiningColumns);
+            joins.PrintSchema();
+
+            DataFrame timeDifference = joins.WithColumn("DiffInSeconds", UnixTimestamp(Col("ManualTimestampLogout")) - UnixTimestamp(Col("ManualTimestampLogin")));
+            timeDifference.PrintSchema();
+
+            DataFrame result = GetJsonValueOfDF(timeDifference);
+
+            Spark.Sql.Streaming.StreamingQuery query = result
                 .SelectExpr("CAST(value AS STRING)")
                 //.SelectExpr("CAST(value AS STRING)", "CAST(UID2 AS STRING)")
                 .WriteStream()
@@ -56,8 +74,11 @@ namespace Microsoft.Spark.Examples.Sql.Streaming
             query.AwaitTermination();
         }
 
-        private DataFrame GetPurifiedDF(DataFrame p_RawDF)
+        private DataFrame GetPurifiedDF(DataFrame p_rawDF, bool p_Login = true, bool p_toJsonValue = false)
         {
+            string manualTimestamp = "ManualTimestamp";
+            manualTimestamp = p_Login ? manualTimestamp + "Login" : manualTimestamp + "Logout";
+
             // Need to explicitly specify the schema since pickling vs. arrow formatting
             // will return different types. Pickling will turn longs into ints if the values fit.
             // Same as the "age INT, name STRING" DDL-format string.
@@ -72,13 +93,13 @@ namespace Microsoft.Spark.Examples.Sql.Streaming
             });
             //DataFrame df = spark.Read().Schema(inputSchema).Json(args[0]);
 
-            DataFrame objectDF = p_RawDF.Select(FromJson(Col(_Value), inputSchema.Json).Alias(_Value), Col("Timestamp").Alias("KafkasorgTimestamp"));
-            objectDF = objectDF.WithColumn("ManualTimestamp", ToTimestamp(Col($"{_Value}.Timestamp")));
+            DataFrame objectDF = p_rawDF.Select(FromJson(Col(_Value), inputSchema.Json).Alias(_Value), Col("Timestamp").Alias("KafkasorgTimestamp"));
+            objectDF = objectDF.WithColumn(manualTimestamp, ToTimestamp(Col($"{_Value}.Timestamp")));
             objectDF.PrintSchema();
 
             List<StructField> structFields = inputSchema.Fields;
             string[] returnCols = new string[structFields.Count + 1];
-            returnCols[returnCols.Length - 1] = "ManualTimestamp";
+            returnCols[returnCols.Length - 1] = manualTimestamp;
             for (var i = 0; i < structFields.Count; i++)
             {
                 returnCols[i] = $"{_Value}.{structFields[i].Name}";
@@ -86,9 +107,13 @@ namespace Microsoft.Spark.Examples.Sql.Streaming
             DataFrame returnColumns = objectDF.Select("KafkasorgTimestamp", returnCols);
             returnColumns.PrintSchema();
 
-            DataFrame returnColumnsJson = returnColumns.Select(ToJson(Struct("*")).Alias(_Value));
-            returnColumnsJson.PrintSchema();
+            return p_toJsonValue ? GetJsonValueOfDF(returnColumns) : returnColumns;
+        }
 
+        private DataFrame GetJsonValueOfDF(DataFrame p_dataFrame)
+        {
+            DataFrame returnColumnsJson = p_dataFrame.Select(ToJson(Struct("*")).Alias(_Value));
+            returnColumnsJson.PrintSchema();
             return returnColumnsJson;
         }
     }
