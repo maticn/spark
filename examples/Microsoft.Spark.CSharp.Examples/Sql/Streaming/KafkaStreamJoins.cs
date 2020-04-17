@@ -50,9 +50,9 @@ namespace Microsoft.Spark.Examples.Sql.Streaming
                 .SelectExpr("CAST(value AS STRING)", "CAST(timestamp AS TIMESTAMP)");
             logoutsStream.PrintSchema();
             DataFrame logouts = GetPurifiedDF(logoutsStream, false);
-
-            List<string> joiningColumns = new List<string> {"UID1", "UID2"};
-            DataFrame joins = logins.Join(logouts, joiningColumns);
+            
+            DataFrame joins = logins.Join(logouts, 
+                Expr("LoginUID1 = LogoutUID1 AND LoginUID2 = LogoutUID2 AND ManualTimestampLogout >= ManualTimestampLogin AND ManualTimestampLogoutUnixInt <= ManualTimestampLoginUnixInt + interval 8 hours"));
             joins.PrintSchema();
 
             DataFrame timeDifference = joins.WithColumn("DiffInSeconds", UnixTimestamp(Col("ManualTimestampLogout")) - UnixTimestamp(Col("ManualTimestampLogin")));
@@ -74,10 +74,10 @@ namespace Microsoft.Spark.Examples.Sql.Streaming
             query.AwaitTermination();
         }
 
-        private DataFrame GetPurifiedDF(DataFrame p_rawDF, bool p_Login = true, bool p_toJsonValue = false)
+        private DataFrame GetPurifiedDF(DataFrame p_rawDF, bool p_login = true, bool p_toJsonValue = false)
         {
-            string manualTimestamp = "ManualTimestamp";
-            manualTimestamp = p_Login ? manualTimestamp + "Login" : manualTimestamp + "Logout";
+            string eventType = p_login ? "Login" : "Logout";
+            string manualTimestamp = "ManualTimestamp" + eventType;
 
             // Need to explicitly specify the schema since pickling vs. arrow formatting
             // will return different types. Pickling will turn longs into ints if the values fit.
@@ -98,16 +98,22 @@ namespace Microsoft.Spark.Examples.Sql.Streaming
             objectDF.PrintSchema();
 
             List<StructField> structFields = inputSchema.Fields;
-            string[] returnCols = new string[structFields.Count + 1];
-            returnCols[returnCols.Length - 1] = manualTimestamp;
-            for (var i = 0; i < structFields.Count; i++)
+            List<string> returnCols = new List<string> {manualTimestamp};
+            foreach (StructField filed in structFields)
             {
-                returnCols[i] = $"{_Value}.{structFields[i].Name}";
+                returnCols.Add($"{_Value}.{filed.Name}");
             }
-            DataFrame returnColumns = objectDF.Select("KafkasorgTimestamp", returnCols);
+            DataFrame returnColumns = objectDF.Select("KafkasorgTimestamp", returnCols.ToArray());
             returnColumns.PrintSchema();
 
-            return p_toJsonValue ? GetJsonValueOfDF(returnColumns) : returnColumns;
+            DataFrame columnsWithWatermark = returnColumns
+                .WithColumn(eventType + "UID1", Col("UID1"))
+                .WithColumn(eventType + "UID2", Col("UID2"))
+                .WithColumn(manualTimestamp + "UnixInt", FromUnixTime(UnixTimestamp(Col(manualTimestamp)).Cast("long")))
+                .WithWatermark(manualTimestamp, "1 minute");
+            columnsWithWatermark.PrintSchema();
+
+            return p_toJsonValue ? GetJsonValueOfDF(columnsWithWatermark) : columnsWithWatermark;
         }
 
         private DataFrame GetJsonValueOfDF(DataFrame p_dataFrame)
