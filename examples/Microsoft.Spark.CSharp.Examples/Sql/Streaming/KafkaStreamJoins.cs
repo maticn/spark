@@ -25,6 +25,12 @@ namespace Microsoft.Spark.Examples.Sql.Streaming
 
         public void Run(string[] args)
         {
+            // TODO M: Checkpointing: https://spark.apache.org/docs/latest/streaming-programming-guide.html?fbclid=IwAR2Jjhls4VDOQlrnuMdHb0FN-it69a7jBzfjmd8OLtWDJC7BeDFBpxPKoys#how-to-configure-checkpointing
+            // TODO M: Reliable receiver: https://spark.apache.org/docs/latest/streaming-custom-receivers.html
+            // TODO M: Read from Kafka API and not as Consumer: https://spark.apache.org/docs/latest/streaming-programming-guide.html?fbclid=IwAR2Jjhls4VDOQlrnuMdHb0FN-it69a7jBzfjmd8OLtWDJC7BeDFBpxPKoys#with-kafka-direct-api ; https://spark.apache.org/docs/latest/streaming-kafka-0-10-integration.html
+            // TODO M: Deployment: https://spark.apache.org/docs/latest/streaming-programming-guide.html?fbclid=IwAR2Jjhls4VDOQlrnuMdHb0FN-it69a7jBzfjmd8OLtWDJC7BeDFBpxPKoys#deploying-applications
+
+
             SparkSession spark = SparkSession
                 .Builder()
                 .AppName("StructuredKafkaWordCount")
@@ -55,7 +61,10 @@ namespace Microsoft.Spark.Examples.Sql.Streaming
                 Expr("LoginUID1 = LogoutUID1 AND LoginUID2 = LogoutUID2 AND ManualTimestampLogout >= ManualTimestampLogin AND ManualTimestampLogoutUnixInt <= ManualTimestampLoginUnixInt + interval 8 hours"));
             joins.PrintSchema();
 
-            DataFrame timeDifference = joins.WithColumn("DiffInSeconds", UnixTimestamp(Col("ManualTimestampLogout")) - UnixTimestamp(Col("ManualTimestampLogin")));
+            DataFrame droppedDuplicates = joins.DropDuplicates("LoginID");
+
+            DataFrame timeDifference = droppedDuplicates.WithColumn("DiffInSeconds", UnixTimestamp(Col("ManualTimestampLogout")) - UnixTimestamp(Col("ManualTimestampLogin")));
+            timeDifference = timeDifference.WithColumn("ResultTimestamp", CurrentTimestamp());
             timeDifference.PrintSchema();
 
             DataFrame result = GetJsonValueOfDF(timeDifference);
@@ -107,6 +116,7 @@ namespace Microsoft.Spark.Examples.Sql.Streaming
             returnColumns.PrintSchema();
 
             DataFrame columnsWithWatermark = returnColumns
+                .WithColumn(eventType + "ID", Col("ID"))
                 .WithColumn(eventType + "UID1", Col("UID1"))
                 .WithColumn(eventType + "UID2", Col("UID2"))
                 .WithColumn(manualTimestamp + "UnixInt", FromUnixTime(UnixTimestamp(Col(manualTimestamp)).Cast("long")))
