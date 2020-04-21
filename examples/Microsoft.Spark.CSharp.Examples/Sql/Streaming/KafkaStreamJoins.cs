@@ -25,9 +25,8 @@ namespace Microsoft.Spark.Examples.Sql.Streaming
 
         public void Run(string[] args)
         {
-            // TODO M: Checkpointing: https://spark.apache.org/docs/latest/streaming-programming-guide.html?fbclid=IwAR2Jjhls4VDOQlrnuMdHb0FN-it69a7jBzfjmd8OLtWDJC7BeDFBpxPKoys#how-to-configure-checkpointing
-            // TODO M: Reliable receiver: https://spark.apache.org/docs/latest/streaming-custom-receivers.html
-            // TODO M: Read from Kafka API and not as Consumer: https://spark.apache.org/docs/latest/streaming-programming-guide.html?fbclid=IwAR2Jjhls4VDOQlrnuMdHb0FN-it69a7jBzfjmd8OLtWDJC7BeDFBpxPKoys#with-kafka-direct-api ; https://spark.apache.org/docs/latest/streaming-kafka-0-10-integration.html
+            // TODO M: Manual offset commiting not possible: https://spark.apache.org/docs/latest/streaming-kafka-0-10-integration.html#obtaining-offsets -> https://docs.microsoft.com/en-us/azure/databricks/spark/latest/structured-streaming/kafka
+            // TODO M: Read from Kafka API and not as Consumer (createDirectStream instead of createStream): https://spark.apache.org/docs/latest/streaming-programming-guide.html?fbclid=IwAR2Jjhls4VDOQlrnuMdHb0FN-it69a7jBzfjmd8OLtWDJC7BeDFBpxPKoys#with-kafka-direct-api ; https://spark.apache.org/docs/latest/streaming-kafka-0-10-integration.html
             // TODO M: Deployment: https://spark.apache.org/docs/latest/streaming-programming-guide.html?fbclid=IwAR2Jjhls4VDOQlrnuMdHb0FN-it69a7jBzfjmd8OLtWDJC7BeDFBpxPKoys#deploying-applications
 
 
@@ -36,22 +35,30 @@ namespace Microsoft.Spark.Examples.Sql.Streaming
                 .AppName("StructuredKafkaWordCount")
                 //.Config("checkpointLocation", _CheckpointLocation)
                 .GetOrCreate();
-
+            
             DataFrame loginsStream = spark
                 .ReadStream()
                 .Format("kafka")
                 .Option("kafka.bootstrap.servers", _BootstrapServers)
                 .Option(_SubscribeType, "logins-topic")
+                //.Option("group.id", "spark-demo-logins")
+                //.Option("enable.auto.commit", "false")
+                //.Option("auto.offset.reset", "latest")
+                //.Option("spark.streaming.receiver.writeAheadLog.enable", "true")
                 .Load()
                 .SelectExpr("CAST(value AS STRING)", "CAST(timestamp AS TIMESTAMP)");
             loginsStream.PrintSchema();
             DataFrame logins = GetPurifiedDF(loginsStream, true);
-
+            
             DataFrame logoutsStream = spark
                 .ReadStream()
                 .Format("kafka")
                 .Option("kafka.bootstrap.servers", _BootstrapServers)
                 .Option(_SubscribeType, "logouts-topic")
+                //.Option("group.id", "spark-demo-logouts")
+                //.Option("enable.auto.commit", "false")
+                //.Option("auto.offset.reset", "latest")
+                //.Option("spark.streaming.receiver.writeAheadLog.enable", "true")
                 .Load()
                 .SelectExpr("CAST(value AS STRING)", "CAST(timestamp AS TIMESTAMP)");
             logoutsStream.PrintSchema();
@@ -71,7 +78,6 @@ namespace Microsoft.Spark.Examples.Sql.Streaming
 
             Spark.Sql.Streaming.StreamingQuery query = result
                 .SelectExpr("CAST(value AS STRING)")
-                //.SelectExpr("CAST(value AS STRING)", "CAST(UID2 AS STRING)")
                 .WriteStream()
                 //.OutputMode("complete")
                 .Format("kafka")
