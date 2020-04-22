@@ -20,51 +20,29 @@ namespace Microsoft.Spark.Examples.Sql.Streaming
     {
         private static readonly string _BootstrapServers = "localhost:9092";
         private static readonly string _SubscribeType = "subscribe";
-        private static readonly string _CheckpointLocation = @"C:\temp\sparkcheckpoint";
+        private static readonly string _CheckpointLocationSpark = @"C:\temp\sparkcheckpoint\spark";
+        private static readonly string _CheckpointLocationQuery = @"C:\temp\sparkcheckpoint\query";
         private static readonly string _Value = "value";
 
         public void Run(string[] args)
         {
-            // TODO M: Manual offset commiting not possible: https://spark.apache.org/docs/latest/streaming-kafka-0-10-integration.html#obtaining-offsets -> https://docs.microsoft.com/en-us/azure/databricks/spark/latest/structured-streaming/kafka
+            // TODO M: https://www.slideshare.net/SparkSummit/what-no-one-tells-you-about-writing-a-streaming-app-spark-summit-east-talk-by-mark-grover-and-ted-malaska
             // TODO M: Read from Kafka API and not as Consumer (createDirectStream instead of createStream): https://spark.apache.org/docs/latest/streaming-programming-guide.html?fbclid=IwAR2Jjhls4VDOQlrnuMdHb0FN-it69a7jBzfjmd8OLtWDJC7BeDFBpxPKoys#with-kafka-direct-api ; https://spark.apache.org/docs/latest/streaming-kafka-0-10-integration.html
+            // TODO M: Manual offset commiting: https://spark.apache.org/docs/latest/streaming-kafka-0-10-integration.html#obtaining-offsets -> https://docs.microsoft.com/en-us/azure/databricks/spark/latest/structured-streaming/kafka
+            // TODO M: How to stop Spark app Gracefully? How to stop Query.awaitTermination? : https://www.linkedin.com/pulse/how-shutdown-spark-streaming-job-gracefully-lan-jiang/
             // TODO M: Deployment: https://spark.apache.org/docs/latest/streaming-programming-guide.html?fbclid=IwAR2Jjhls4VDOQlrnuMdHb0FN-it69a7jBzfjmd8OLtWDJC7BeDFBpxPKoys#deploying-applications
 
 
             SparkSession spark = SparkSession
                 .Builder()
-                .AppName("StructuredKafkaWordCount")
-                //.Config("checkpointLocation", _CheckpointLocation)
+                .AppName("KafkaStreamJoins")
+                .Config("checkpointLocation", _CheckpointLocationSpark)
                 .GetOrCreate();
+
+            DataFrame logins = ReadKafkaStream(spark, "logins-topic", true);
+            DataFrame logouts = ReadKafkaStream(spark, "logouts-topic", false);
             
-            DataFrame loginsStream = spark
-                .ReadStream()
-                .Format("kafka")
-                .Option("kafka.bootstrap.servers", _BootstrapServers)
-                .Option(_SubscribeType, "logins-topic")
-                //.Option("group.id", "spark-demo-logins")
-                //.Option("enable.auto.commit", "false")
-                //.Option("auto.offset.reset", "latest")
-                //.Option("spark.streaming.receiver.writeAheadLog.enable", "true")
-                .Load()
-                .SelectExpr("CAST(value AS STRING)", "CAST(timestamp AS TIMESTAMP)");
-            loginsStream.PrintSchema();
-            DataFrame logins = GetPurifiedDF(loginsStream, true);
-            
-            DataFrame logoutsStream = spark
-                .ReadStream()
-                .Format("kafka")
-                .Option("kafka.bootstrap.servers", _BootstrapServers)
-                .Option(_SubscribeType, "logouts-topic")
-                //.Option("group.id", "spark-demo-logouts")
-                //.Option("enable.auto.commit", "false")
-                //.Option("auto.offset.reset", "latest")
-                //.Option("spark.streaming.receiver.writeAheadLog.enable", "true")
-                .Load()
-                .SelectExpr("CAST(value AS STRING)", "CAST(timestamp AS TIMESTAMP)");
-            logoutsStream.PrintSchema();
-            DataFrame logouts = GetPurifiedDF(logoutsStream, false);
-            
-            DataFrame joins = logins.Join(logouts, 
+            DataFrame joins = logins.Join(logouts,
                 Expr("LoginUID1 = LogoutUID1 AND LoginUID2 = LogoutUID2 AND ManualTimestampLogout >= ManualTimestampLogin AND ManualTimestampLogoutUnixInt <= ManualTimestampLoginUnixInt + interval 8 hours"));
             joins.PrintSchema();
 
@@ -83,15 +61,32 @@ namespace Microsoft.Spark.Examples.Sql.Streaming
                 .Format("kafka")
                 .Option("kafka.bootstrap.servers", _BootstrapServers)
                 .Option("topic", "replay-topic")
-                .Option("checkpointLocation", _CheckpointLocation)
+                .Option("checkpointLocation", _CheckpointLocationQuery)
                 .Start();
 
             query.AwaitTermination();
         }
 
-        private DataFrame GetPurifiedDF(DataFrame p_rawDF, bool p_login = true, bool p_toJsonValue = false)
+        private DataFrame ReadKafkaStream(SparkSession p_SparkSession, string p_KafkaTopic, bool p_Login)
         {
-            string eventType = p_login ? "Login" : "Logout";
+            DataFrame stream = p_SparkSession
+                .ReadStream()
+                .Format("kafka")
+                .Option("kafka.bootstrap.servers", _BootstrapServers)
+                .Option(_SubscribeType, p_KafkaTopic)
+                //.Option("group.id", "spark-demo-logins")
+                //.Option("enable.auto.commit", "false")
+                //.Option("auto.offset.reset", "latest")
+                .Option("spark.streaming.receiver.writeAheadLog.enable", "true")
+                .Load()
+                .SelectExpr("CAST(value AS STRING)", "CAST(timestamp AS TIMESTAMP)");
+            stream.PrintSchema();
+            return GetPurifiedDF(stream, p_Login);
+        }
+
+        private DataFrame GetPurifiedDF(DataFrame p_RawDF, bool p_Login = true, bool p_ToJsonValue = false)
+        {
+            string eventType = p_Login ? "Login" : "Logout";
             string manualTimestamp = "ManualTimestamp" + eventType;
 
             // Need to explicitly specify the schema since pickling vs. arrow formatting
@@ -108,12 +103,12 @@ namespace Microsoft.Spark.Examples.Sql.Streaming
             });
             //DataFrame df = spark.Read().Schema(inputSchema).Json(args[0]);
 
-            DataFrame objectDF = p_rawDF.Select(FromJson(Col(_Value), inputSchema.Json).Alias(_Value), Col("Timestamp").Alias("KafkasorgTimestamp"));
+            DataFrame objectDF = p_RawDF.Select(FromJson(Col(_Value), inputSchema.Json).Alias(_Value), Col("Timestamp").Alias("KafkasorgTimestamp"));
             objectDF = objectDF.WithColumn(manualTimestamp, ToTimestamp(Col($"{_Value}.Timestamp")));
             objectDF.PrintSchema();
 
             List<StructField> structFields = inputSchema.Fields;
-            List<string> returnCols = new List<string> {manualTimestamp};
+            List<string> returnCols = new List<string> { manualTimestamp };
             foreach (StructField filed in structFields)
             {
                 returnCols.Add($"{_Value}.{filed.Name}");
@@ -129,12 +124,12 @@ namespace Microsoft.Spark.Examples.Sql.Streaming
                 .WithWatermark(manualTimestamp, "1 minute");
             columnsWithWatermark.PrintSchema();
 
-            return p_toJsonValue ? GetJsonValueOfDF(columnsWithWatermark) : columnsWithWatermark;
+            return p_ToJsonValue ? GetJsonValueOfDF(columnsWithWatermark) : columnsWithWatermark;
         }
 
-        private DataFrame GetJsonValueOfDF(DataFrame p_dataFrame)
+        private DataFrame GetJsonValueOfDF(DataFrame p_DataFrame)
         {
-            DataFrame returnColumnsJson = p_dataFrame.Select(ToJson(Struct("*")).Alias(_Value));
+            DataFrame returnColumnsJson = p_DataFrame.Select(ToJson(Struct("*")).Alias(_Value));
             returnColumnsJson.PrintSchema();
             return returnColumnsJson;
         }
