@@ -18,7 +18,10 @@ namespace Microsoft.Spark.Examples.Sql.Streaming
     /// </summary>
     internal sealed class KafkaStreamJoins : IExample
     {
-        private static readonly string _BootstrapServers = "localhost:9092";
+        private static readonly string _IP = "192.168.1.80";
+        private static readonly string _KafkaPort = "9092";
+        private static readonly string _BootstrapServers = $"{_IP}:{_KafkaPort}";
+        private static readonly string _SparkDriverPort = "61761";
         private static readonly string _SubscribeType = "subscribe";
         private static readonly string _CheckpointLocationSpark = @"C:\temp\sparkcheckpoint\spark";
         private static readonly string _CheckpointLocationQuery = @"C:\temp\sparkcheckpoint\query";
@@ -29,16 +32,19 @@ namespace Microsoft.Spark.Examples.Sql.Streaming
             // TODO M: https://www.slideshare.net/SparkSummit/what-no-one-tells-you-about-writing-a-streaming-app-spark-summit-east-talk-by-mark-grover-and-ted-malaska
             // TODO M: Read from Kafka API and not as Consumer (createDirectStream instead of createStream): https://spark.apache.org/docs/latest/streaming-programming-guide.html?fbclid=IwAR2Jjhls4VDOQlrnuMdHb0FN-it69a7jBzfjmd8OLtWDJC7BeDFBpxPKoys#with-kafka-direct-api ; https://spark.apache.org/docs/latest/streaming-kafka-0-10-integration.html
             // TODO M: Manual offset commiting: https://spark.apache.org/docs/latest/streaming-kafka-0-10-integration.html#obtaining-offsets -> https://docs.microsoft.com/en-us/azure/databricks/spark/latest/structured-streaming/kafka
-            // TODO M: How to stop Spark app Gracefully? How to stop Query.awaitTermination? : https://www.linkedin.com/pulse/how-shutdown-spark-streaming-job-gracefully-lan-jiang/
             // TODO M: Deployment: https://spark.apache.org/docs/latest/streaming-programming-guide.html?fbclid=IwAR2Jjhls4VDOQlrnuMdHb0FN-it69a7jBzfjmd8OLtWDJC7BeDFBpxPKoys#deploying-applications
-
+            // TODO M: How to deploy Spark app to a cluster, close the terminal and the app keeps running?
+            // TODO M: How to stop Spark app Gracefully? How to stop Query.awaitTermination? : https://www.linkedin.com/pulse/how-shutdown-spark-streaming-job-gracefully-lan-jiang/
 
             SparkSession spark = SparkSession
                 .Builder()
                 .AppName("KafkaStreamJoins")
+                .Config("spark.driver.host", _IP)
+                .Config("spark.driver.port", _SparkDriverPort)
+                //.Config("spark.executor.instances", "1")
                 .Config("checkpointLocation", _CheckpointLocationSpark)
                 .GetOrCreate();
-
+            
             DataFrame logins = ReadKafkaStream(spark, "logins-topic", true);
             DataFrame logouts = ReadKafkaStream(spark, "logouts-topic", false);
             
