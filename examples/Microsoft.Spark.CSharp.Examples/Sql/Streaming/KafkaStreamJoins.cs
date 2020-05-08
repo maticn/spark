@@ -5,6 +5,7 @@
 using System;
 using System.Collections.Generic;
 using System.Collections.ObjectModel;
+using System.IO;
 using System.Linq;
 using Microsoft.Spark.Sql;
 using Microsoft.Spark.Sql.Types;
@@ -26,16 +27,21 @@ namespace Microsoft.Spark.Examples.Sql.Streaming
         private static readonly string _CheckpointLocationSpark = @"C:\temp\sparkcheckpoint\spark";
         private static readonly string _CheckpointLocationQuery = @"C:\temp\sparkcheckpoint\query";
         private static readonly string _RecoveryDirectory = @"C:\temp\sparkcheckpoint\recoverydir";
+        private static readonly string _TouchFileLocation = @"C:\temp\sparkcheckpoint\touchfile.txt";
         private static readonly string _Value = "value";
 
         public void Run(string[] args)
         {
             // TODO M: Read from Kafka API and not as Consumer (createDirectStream instead of createStream): https://spark.apache.org/docs/latest/streaming-programming-guide.html?fbclid=IwAR2Jjhls4VDOQlrnuMdHb0FN-it69a7jBzfjmd8OLtWDJC7BeDFBpxPKoys#with-kafka-direct-api ; https://spark.apache.org/docs/latest/streaming-kafka-0-10-integration.html
             // TODO M: Manual offset commiting: https://spark.apache.org/docs/latest/streaming-kafka-0-10-integration.html#obtaining-offsets -> https://docs.microsoft.com/en-us/azure/databricks/spark/latest/structured-streaming/kafka
+
             // TODO M: Deployment: https://spark.apache.org/docs/latest/streaming-programming-guide.html?fbclid=IwAR2Jjhls4VDOQlrnuMdHb0FN-it69a7jBzfjmd8OLtWDJC7BeDFBpxPKoys#deploying-applications
-            
             // TODO M: Deploy Spark App in Cluster mode. (How to deploy Spark app to a cluster, close the terminal and the app keeps running?)
-            // TODO M: How to stop Spark app Gracefully? How to stop Query.awaitTermination? Create touch file. : https://www.linkedin.com/pulse/how-shutdown-spark-streaming-job-gracefully-lan-jiang/
+            // TODO M: Single-Node Recovery with Local File System
+            // TODO M: How to stop Spark app Gracefully? Create a touch file. : https://blog.clairvoyantsoft.com/productionalizing-spark-streaming-applications-4d1c8711c7b0 ; https://www.linkedin.com/pulse/how-shutdown-spark-streaming-job-gracefully-lan-jiang/
+
+            CreateTouchFile();
+            bool stopSparkSession = false;
 
             SparkSession spark = SparkSession
                 .Builder()
@@ -53,10 +59,10 @@ namespace Microsoft.Spark.Examples.Sql.Streaming
                 //.Config("fs.hdfs.impl", "org.apache.hadoop.hdfs.DistributedFileSystem.class.getName()")
                 //.Config("fs.file.impl", "org.apache.hadoop.fs.LocalFileSystem.class.getName()")
                 .GetOrCreate();
-            
+
             DataFrame logins = ReadKafkaStream(spark, "logins-topic", true);
             DataFrame logouts = ReadKafkaStream(spark, "logouts-topic", false);
-            
+
             DataFrame joins = logins.Join(logouts,
                 Expr("LoginUID1 = LogoutUID1 AND LoginUID2 = LogoutUID2 AND ManualTimestampLogout >= ManualTimestampLogin AND ManualTimestampLogoutUnixInt <= ManualTimestampLoginUnixInt + interval 8 hours"));
             joins.PrintSchema();
@@ -80,6 +86,15 @@ namespace Microsoft.Spark.Examples.Sql.Streaming
                 .Start();
 
             query.AwaitTermination();
+
+            while (!stopSparkSession)
+            {
+                stopSparkSession = !File.Exists(_TouchFileLocation);
+                if (stopSparkSession)
+                {
+                    spark.Stop();
+                }
+            }
         }
 
         private DataFrame ReadKafkaStream(SparkSession p_SparkSession, string p_KafkaTopic, bool p_Login)
@@ -147,6 +162,14 @@ namespace Microsoft.Spark.Examples.Sql.Streaming
             DataFrame returnColumnsJson = p_DataFrame.Select(ToJson(Struct("*")).Alias(_Value));
             returnColumnsJson.PrintSchema();
             return returnColumnsJson;
+        }
+
+        private void CreateTouchFile()
+        {
+            if (!File.Exists(_TouchFileLocation))
+            {
+                File.Create(_TouchFileLocation);
+            }
         }
     }
 }
