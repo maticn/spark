@@ -24,10 +24,13 @@ namespace Microsoft.Spark.Examples.Sql.Streaming
         private static readonly string _BootstrapServers = $"{_IP}:{_KafkaPort}";
         private static readonly string _SparkDriverPort = "61761";
         private static readonly string _SubscribeType = "subscribe";
-        private static readonly string _CheckpointLocationSpark = @"C:\temp\sparkcheckpoint\spark";
-        private static readonly string _CheckpointLocationQuery = @"C:\temp\sparkcheckpoint\query";
-        private static readonly string _RecoveryDirectory = @"C:\temp\sparkcheckpoint\recoverydir";
-        private static readonly string _TouchFileLocation = @"C:\temp\sparkcheckpoint\touchfile.txt";
+
+        private static readonly string _SparkDirectory = @"C:\temp\sparkcheckpoint\";
+        private static readonly string _CheckpointLocationSpark = _SparkDirectory + "spark";
+        private static readonly string _CheckpointLocationQuery = _SparkDirectory + "query";
+        private static readonly string _RecoveryDirectory = _SparkDirectory + "recoverydir";
+        private static readonly string _TouchFileLocation = _SparkDirectory + "touchfile.txt";
+
         private static readonly string _Value = "value";
 
         public void Run(string[] args)
